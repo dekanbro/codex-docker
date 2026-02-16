@@ -19,11 +19,11 @@ This template is optimized for Railway using one Docker image with mode-based st
 Create two services from this same repo/image:
 
 1. `codex-shell`
-- Start command: `shell`
+- Start command: `/usr/local/bin/entrypoint.sh shell`
 - Purpose: always-on service for interactive sessions via `railway ssh`.
 
 2. `codex-cron`
-- Start command: `cron`
+- Start command: `/usr/local/bin/entrypoint.sh cron`
 - Purpose: scheduled task runner.
 - Required env var: `CODEX_TASK` (prompt/instruction for the run).
 - Configure schedule in Railway Cron settings.
@@ -31,7 +31,7 @@ Create two services from this same repo/image:
 Optional later:
 
 3. `codex-api`
-- Start command: `api`
+- Start command: `/usr/local/bin/entrypoint.sh api`
 - Your server must listen on `0.0.0.0:$PORT`.
 
 ## SSH usage
