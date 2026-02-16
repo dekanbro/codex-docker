@@ -18,6 +18,7 @@ RUN useradd -m -u 10001 -s /bin/bash codex
 USER codex
 
 COPY --chown=codex:codex docker/entrypoint.sh /usr/local/bin/entrypoint.sh
+COPY --chown=codex:codex . /workspace
 RUN chmod 0755 /usr/local/bin/entrypoint.sh
 
 ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/entrypoint.sh"]
