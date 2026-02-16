@@ -9,7 +9,10 @@ case "$MODE" in
     exec sleep infinity
     ;;
   cron)
-    : "${CODEX_TASK:?CODEX_TASK is required for cron mode}"
+    if [[ -n "${CODEX_CRON_COMMAND:-}" ]]; then
+      exec /bin/bash -lc "$CODEX_CRON_COMMAND"
+    fi
+    : "${CODEX_TASK:?CODEX_TASK is required for cron mode unless CODEX_CRON_COMMAND is set}"
     exec codex run "$CODEX_TASK"
     ;;
   api)
