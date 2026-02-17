@@ -279,7 +279,10 @@ function runCodex(prompt) {
 
     const child = spawn('codex', args, {
       stdio: 'inherit',
-      env: process.env,
+      env: {
+        ...process.env,
+        OPENAI_API_KEY: OPENAI_API_KEY_TRIMMED,
+      },
     });
 
     child.on('exit', (code, signal) => {
