@@ -110,7 +110,7 @@ function buildCodexPrompt(item) {
 
 function runCodex(prompt) {
   return new Promise((resolve) => {
-    const args = ['run'];
+    const args = ['exec', '--skip-git-repo-check'];
     if (CODEX_MODEL) {
       args.push('--model', CODEX_MODEL);
     }

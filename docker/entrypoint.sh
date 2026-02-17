@@ -24,7 +24,7 @@ case "$MODE" in
       exec /bin/bash -lc "$CODEX_CRON_COMMAND"
     fi
     : "${CODEX_TASK:?CODEX_TASK is required for cron mode unless CODEX_CRON_COMMAND is set}"
-    exec codex run "$CODEX_TASK"
+    exec codex exec --skip-git-repo-check "$CODEX_TASK"
     ;;
   api)
     # Optional future API/webhook entrypoint.
