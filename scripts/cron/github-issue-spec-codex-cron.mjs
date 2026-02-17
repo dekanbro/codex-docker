@@ -31,6 +31,7 @@ const CODEX_BASE_PROMPT = process.env.CODEX_BASE_PROMPT || [
   'Open a PR back to the same repository.',
   'If a PR cannot be created, explain precisely what is missing and exit non-zero.'
 ].join(' ');
+const OPENAI_API_KEY = process.env.OPENAI_API_KEY || '';
 
 if (!GH_TOKEN) {
   console.error(JSON.stringify({ error: 'GH_TOKEN missing' }));
@@ -230,6 +231,8 @@ async function collectActionableEvents() {
   const result = await collectActionableEvents();
 
   const summary = {
+    statePath: STATE_PATH,
+    openaiApiKeyPresent: Boolean(OPENAI_API_KEY),
     newestEventId: result.newestEventId,
     initialized: result.initialized,
     reset: result.reset,
@@ -237,6 +240,12 @@ async function collectActionableEvents() {
     actionable: result.actionable,
     codexRuns: [],
   };
+
+  if (summary.actionable.length > 0 && !OPENAI_API_KEY) {
+    summary.error = 'OPENAI_API_KEY missing; cannot run codex exec for actionable issues';
+    console.log(JSON.stringify(summary));
+    process.exit(2);
+  }
 
   for (const item of result.actionable) {
     const prompt = buildCodexPrompt(item);

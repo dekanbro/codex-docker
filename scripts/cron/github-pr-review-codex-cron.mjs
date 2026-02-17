@@ -31,6 +31,7 @@ const CODEX_REVIEW_BASE_PROMPT = process.env.CODEX_REVIEW_BASE_PROMPT || [
   'Keep changes minimal and scoped to review feedback.',
   'Run relevant checks before pushing.'
 ].join(' ');
+const OPENAI_API_KEY = process.env.OPENAI_API_KEY || '';
 
 function readJson(p) {
   try {
@@ -295,6 +296,8 @@ async function main() {
 
   const out = {
     repo: REPO,
+    statePath: STATE_PATH,
+    openaiApiKeyPresent: Boolean(OPENAI_API_KEY),
     newestEventId,
     initialized: false,
     reset: false,
@@ -410,6 +413,12 @@ async function main() {
   }
 
   writeJsonAtomic(STATE_PATH, { lastEventId: newestEventId, notified, ts: new Date().toISOString() });
+
+  if (out.actionable.length > 0 && !OPENAI_API_KEY) {
+    out.error = 'OPENAI_API_KEY missing; cannot run codex exec for actionable PRs';
+    console.log(JSON.stringify(out));
+    process.exit(2);
+  }
 
   for (const item of out.actionable) {
     const prompt = buildCodexPrompt(item);
