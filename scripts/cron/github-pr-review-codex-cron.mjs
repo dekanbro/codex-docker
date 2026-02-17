@@ -32,6 +32,8 @@ const CODEX_REVIEW_BASE_PROMPT = process.env.CODEX_REVIEW_BASE_PROMPT || [
   'Run relevant checks before pushing.'
 ].join(' ');
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY || '';
+const OPENAI_API_KEY_TRIMMED = OPENAI_API_KEY.trim();
+const OPENAI_API_KEY_VALID = OPENAI_API_KEY_TRIMMED.startsWith('sk-') && OPENAI_API_KEY_TRIMMED.length > 20;
 
 function readJson(p) {
   try {
@@ -297,7 +299,10 @@ async function main() {
   const out = {
     repo: REPO,
     statePath: STATE_PATH,
-    openaiApiKeyPresent: Boolean(OPENAI_API_KEY),
+    openaiApiKeyPresent: Boolean(OPENAI_API_KEY_TRIMMED),
+    openaiApiKeyValid: OPENAI_API_KEY_VALID,
+    openaiApiKeyLength: OPENAI_API_KEY_TRIMMED.length,
+    openaiApiKeyPrefix: OPENAI_API_KEY_TRIMMED ? OPENAI_API_KEY_TRIMMED.slice(0, 7) : '',
     newestEventId,
     initialized: false,
     reset: false,
@@ -414,8 +419,8 @@ async function main() {
 
   writeJsonAtomic(STATE_PATH, { lastEventId: newestEventId, notified, ts: new Date().toISOString() });
 
-  if (out.actionable.length > 0 && !OPENAI_API_KEY) {
-    out.error = 'OPENAI_API_KEY missing; cannot run codex exec for actionable PRs';
+  if (out.actionable.length > 0 && !OPENAI_API_KEY_VALID) {
+    out.error = 'OPENAI_API_KEY missing/invalid for codex exec (expected non-empty key starting with sk-)';
     console.log(JSON.stringify(out));
     process.exit(2);
   }
