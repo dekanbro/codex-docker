@@ -9,6 +9,12 @@ case "$MODE" in
     exec sleep infinity
     ;;
   cron)
+    if [[ -n "${CODEX_AUTH:-}" ]]; then
+      mkdir -p /root/.codex
+      printf '%s' "$CODEX_AUTH" > /root/.codex/auth.json
+      chmod 600 /root/.codex/auth.json
+    fi
+
     if [[ -n "${CODEX_CRON_COMMAND:-}" ]]; then
       # Helpful validation for the common pattern: CODEX_CRON_COMMAND="node /workspace/scripts/cron/<file>.mjs"
       if [[ "$CODEX_CRON_COMMAND" =~ ^node[[:space:]]+([^[:space:]]+) ]]; then
