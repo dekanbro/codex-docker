@@ -105,7 +105,9 @@ function buildCodexPrompt(item) {
     'Execution requirements:',
     `- Ensure PR body includes: Fixes #${item.number}`,
     '- Keep changes minimal and focused to the issue request.',
-    '- Run relevant tests or checks before opening PR.'
+    '- Run relevant tests or checks before opening PR.',
+    '- Install repository dependencies before running lint/tests if needed.',
+    '- If a check tool is missing and cannot be installed in this run, proceed with best-effort checks and clearly note the limitation in the PR.'
   ].join('\n');
 }
 

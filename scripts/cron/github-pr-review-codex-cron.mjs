@@ -265,7 +265,9 @@ function buildCodexPrompt(item) {
     '- Resolve the unresolved CodeRabbit review feedback on this PR.',
     '- Push fixes to the PR branch.',
     '- Do not open a new PR for this task.',
-    '- Post concise review-response comments if needed.'
+    '- Post concise review-response comments if needed.',
+    '- Before running lint/tests, install dependencies for this repository if they are not installed.',
+    '- If a specific tool is missing (for example eslint) and cannot be installed in this run, continue with best-effort validation and document the limitation.'
   ].join('\n');
 }
 
