@@ -32,8 +32,6 @@ const CODEX_BASE_PROMPT = process.env.CODEX_BASE_PROMPT || [
   'If a PR cannot be created, explain precisely what is missing and exit non-zero.'
 ].join(' ');
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY || '';
-const OPENAI_API_KEY_TRIMMED = OPENAI_API_KEY.trim();
-const OPENAI_API_KEY_VALID = OPENAI_API_KEY_TRIMMED.startsWith('sk-') && OPENAI_API_KEY_TRIMMED.length > 20;
 
 if (!GH_TOKEN) {
   console.error(JSON.stringify({ error: 'GH_TOKEN missing' }));
@@ -123,7 +121,7 @@ function runCodex(prompt) {
       stdio: 'inherit',
       env: {
         ...process.env,
-        OPENAI_API_KEY: OPENAI_API_KEY_TRIMMED,
+        OPENAI_API_KEY: OPENAI_API_KEY.trim(),
       },
     });
 
@@ -237,10 +235,6 @@ async function collectActionableEvents() {
 
   const summary = {
     statePath: STATE_PATH,
-    openaiApiKeyPresent: Boolean(OPENAI_API_KEY_TRIMMED),
-    openaiApiKeyValid: OPENAI_API_KEY_VALID,
-    openaiApiKeyLength: OPENAI_API_KEY_TRIMMED.length,
-    openaiApiKeyPrefix: OPENAI_API_KEY_TRIMMED ? OPENAI_API_KEY_TRIMMED.slice(0, 7) : '',
     newestEventId: result.newestEventId,
     initialized: result.initialized,
     reset: result.reset,
@@ -249,8 +243,8 @@ async function collectActionableEvents() {
     codexRuns: [],
   };
 
-  if (summary.actionable.length > 0 && !OPENAI_API_KEY_VALID) {
-    summary.error = 'OPENAI_API_KEY missing/invalid for codex exec (expected non-empty key starting with sk-)';
+  if (summary.actionable.length > 0 && !OPENAI_API_KEY.trim()) {
+    summary.error = 'OPENAI_API_KEY missing; cannot run codex exec for actionable issues';
     console.log(JSON.stringify(summary));
     process.exit(2);
   }
