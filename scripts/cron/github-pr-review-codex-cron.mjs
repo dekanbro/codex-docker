@@ -416,12 +416,6 @@ async function main() {
 
   writeJsonAtomic(STATE_PATH, { lastEventId: newestEventId, notified, ts: new Date().toISOString() });
 
-  if (out.actionable.length > 0 && !OPENAI_API_KEY.trim()) {
-    out.error = 'OPENAI_API_KEY missing; cannot run codex exec for actionable PRs';
-    console.log(JSON.stringify(out));
-    process.exit(2);
-  }
-
   for (const item of out.actionable) {
     const prompt = buildCodexPrompt(item);
     const run = await runCodex(prompt);

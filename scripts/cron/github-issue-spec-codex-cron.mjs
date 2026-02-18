@@ -243,12 +243,6 @@ async function collectActionableEvents() {
     codexRuns: [],
   };
 
-  if (summary.actionable.length > 0 && !OPENAI_API_KEY.trim()) {
-    summary.error = 'OPENAI_API_KEY missing; cannot run codex exec for actionable issues';
-    console.log(JSON.stringify(summary));
-    process.exit(2);
-  }
-
   for (const item of result.actionable) {
     const prompt = buildCodexPrompt(item);
     const run = await runCodex(prompt);
