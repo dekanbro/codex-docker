@@ -300,16 +300,16 @@ function runCommand(cmd, args, opts = {}) {
 async function prepareRepoForPR(prNumber) {
   const token = getToken();
   const tempDir = fs.mkdtempSync('/tmp/codex-pr-review-');
-  const authHeader = `AUTHORIZATION: bearer ${token}`;
-  const repoUrl = `https://github.com/${REPO}.git`;
+  const encodedToken = encodeURIComponent(token);
+  const repoUrl = `https://x-access-token:${encodedToken}@github.com/${REPO}.git`;
 
-  let result = await runCommand('git', ['-c', `http.extraheader=${authHeader}`, 'clone', '--no-tags', '--depth', '50', repoUrl, tempDir]);
+  let result = await runCommand('git', ['clone', '--no-tags', '--depth', '50', repoUrl, tempDir]);
   if (result.code !== 0) {
     throw new Error(`git clone failed: ${result.stderr || result.stdout}`);
   }
 
   const branchName = `pr-${prNumber}`;
-  result = await runCommand('git', ['-c', `http.extraheader=${authHeader}`, 'fetch', '--depth', '50', 'origin', `pull/${prNumber}/head:${branchName}`], { cwd: tempDir });
+  result = await runCommand('git', ['fetch', '--depth', '50', 'origin', `pull/${prNumber}/head:${branchName}`], { cwd: tempDir });
   if (result.code !== 0) {
     throw new Error(`git fetch PR failed: ${result.stderr || result.stdout}`);
   }
