@@ -269,18 +269,76 @@ function buildCodexPrompt(item) {
   ].join('\n');
 }
 
-function runCodex(prompt) {
+function runCommand(cmd, args, opts = {}) {
   return new Promise((resolve) => {
-    const args = ['exec', '--skip-git-repo-check'];
+    const child = spawn(cmd, args, {
+      cwd: opts.cwd || process.cwd(),
+      env: opts.env || process.env,
+      stdio: opts.stdio || 'pipe',
+    });
+
+    let stdout = '';
+    let stderr = '';
+
+    if (child.stdout) {
+      child.stdout.on('data', (chunk) => {
+        stdout += chunk.toString();
+      });
+    }
+    if (child.stderr) {
+      child.stderr.on('data', (chunk) => {
+        stderr += chunk.toString();
+      });
+    }
+
+    child.on('exit', (code, signal) => {
+      resolve({ code: code ?? 1, signal: signal ?? null, stdout, stderr });
+    });
+  });
+}
+
+async function prepareRepoForPR(prNumber) {
+  const token = getToken();
+  const tempDir = fs.mkdtempSync('/tmp/codex-pr-review-');
+  const authHeader = `AUTHORIZATION: bearer ${token}`;
+  const repoUrl = `https://github.com/${REPO}.git`;
+
+  let result = await runCommand('git', ['-c', `http.extraheader=${authHeader}`, 'clone', '--no-tags', '--depth', '50', repoUrl, tempDir]);
+  if (result.code !== 0) {
+    throw new Error(`git clone failed: ${result.stderr || result.stdout}`);
+  }
+
+  const branchName = `pr-${prNumber}`;
+  result = await runCommand('git', ['-c', `http.extraheader=${authHeader}`, 'fetch', '--depth', '50', 'origin', `pull/${prNumber}/head:${branchName}`], { cwd: tempDir });
+  if (result.code !== 0) {
+    throw new Error(`git fetch PR failed: ${result.stderr || result.stdout}`);
+  }
+
+  result = await runCommand('git', ['checkout', branchName], { cwd: tempDir });
+  if (result.code !== 0) {
+    throw new Error(`git checkout PR branch failed: ${result.stderr || result.stdout}`);
+  }
+
+  return tempDir;
+}
+
+function runCodex(prompt, repoDir) {
+  return new Promise((resolve) => {
+    const args = ['exec', '--sandbox', 'workspace-write'];
     if (CODEX_MODEL) args.push('--model', CODEX_MODEL);
     args.push(prompt);
 
+    const codexEnv = { ...process.env };
+    if (OPENAI_API_KEY.trim()) {
+      codexEnv.OPENAI_API_KEY = OPENAI_API_KEY.trim();
+    } else {
+      delete codexEnv.OPENAI_API_KEY;
+    }
+
     const child = spawn('codex', args, {
       stdio: 'inherit',
-      env: {
-        ...process.env,
-        OPENAI_API_KEY: OPENAI_API_KEY.trim(),
-      },
+      cwd: repoDir,
+      env: codexEnv,
     });
 
     child.on('exit', (code, signal) => {
@@ -418,8 +476,18 @@ async function main() {
 
   for (const item of out.actionable) {
     const prompt = buildCodexPrompt(item);
-    const run = await runCodex(prompt);
-    out.codexRuns.push({ pr: item.number, exitCode: run.code, signal: run.signal });
+    let repoDir = null;
+    try {
+      repoDir = await prepareRepoForPR(item.number);
+      const run = await runCodex(prompt, repoDir);
+      out.codexRuns.push({ pr: item.number, exitCode: run.code, signal: run.signal });
+    } catch (err) {
+      out.codexRuns.push({ pr: item.number, exitCode: 1, signal: null, error: String(err) });
+    } finally {
+      if (repoDir) {
+        fs.rmSync(repoDir, { recursive: true, force: true });
+      }
+    }
   }
 
   console.log(JSON.stringify(out));

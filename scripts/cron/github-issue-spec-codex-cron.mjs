@@ -117,12 +117,16 @@ function runCodex(prompt) {
     }
     args.push(prompt);
 
+    const codexEnv = { ...process.env };
+    if (OPENAI_API_KEY.trim()) {
+      codexEnv.OPENAI_API_KEY = OPENAI_API_KEY.trim();
+    } else {
+      delete codexEnv.OPENAI_API_KEY;
+    }
+
     const child = spawn('codex', args, {
       stdio: 'inherit',
-      env: {
-        ...process.env,
-        OPENAI_API_KEY: OPENAI_API_KEY.trim(),
-      },
+      env: codexEnv,
     });
 
     child.on('exit', (code, signal) => {
