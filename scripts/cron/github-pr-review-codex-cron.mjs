@@ -324,7 +324,7 @@ async function prepareRepoForPR(prNumber) {
 
 function runCodex(prompt, repoDir) {
   return new Promise((resolve) => {
-    const args = ['exec', '--sandbox', 'workspace-write'];
+    const args = ['exec', '--dangerously-bypass-approvals-and-sandbox'];
     if (CODEX_MODEL) args.push('--model', CODEX_MODEL);
     args.push(prompt);
 

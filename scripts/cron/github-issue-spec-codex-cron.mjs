@@ -111,7 +111,7 @@ function buildCodexPrompt(item) {
 
 function runCodex(prompt) {
   return new Promise((resolve) => {
-    const args = ['exec', '--skip-git-repo-check'];
+    const args = ['exec', '--skip-git-repo-check', '--dangerously-bypass-approvals-and-sandbox'];
     if (CODEX_MODEL) {
       args.push('--model', CODEX_MODEL);
     }
