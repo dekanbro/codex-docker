@@ -1,18 +1,18 @@
 #!/usr/bin/env node
 
 /**
- * GitHub PR + CodeRabbit monitor for Codex cron.
+ * GitHub PR automation-review monitor (CodeRabbit + Copilot) for Codex cron.
  *
  * Outputs JSON with:
  * - urgent: failing checks/deploy statuses
- * - actionable: PRs with unresolved CodeRabbit threads (Codex runs)
- * - ready: PRs with threads resolved and head commit newer than latest CodeRabbit activity
+ * - actionable: PRs with unresolved automation-review threads (Codex runs)
+ * - ready: PRs with threads resolved and head commit newer than latest automation-review activity
  *
  * State:
  * - /workspace/.codex/cron/github-pr-review-state.json
  *   {
  *     lastEventId,
- *     notified: { "<prNumber>": { sha, latestCR, notifiedAt } }
+ *     notified: { "<prNumber>": { sha, latestReview, latestCR, notifiedAt } }
  *   }
  */
 
@@ -25,13 +25,15 @@ const API = 'https://api.github.com';
 const EVENTS_URL = `${API}/repos/${REPO}/events?per_page=100`;
 const STATE_PATH = process.env.GITHUB_PR_REVIEW_STATE_PATH || '/workspace/.codex/cron/github-pr-review-state.json';
 const CODEX_MODEL = process.env.CODEX_MODEL || '';
-const CODEX_REVIEW_BASE_PROMPT = process.env.CODEX_REVIEW_BASE_PROMPT || [
+  const CODEX_REVIEW_BASE_PROMPT = process.env.CODEX_REVIEW_BASE_PROMPT || [
   'You are an autonomous coding agent running in cron mode.',
-  'Address unresolved CodeRabbit review threads on the PR and push fixes.',
+  'Address unresolved automation review threads (CodeRabbit/Copilot) on the PR and push fixes.',
   'Keep changes minimal and scoped to review feedback.',
   'Run relevant checks before pushing.'
 ].join(' ');
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY || '';
+const READY_TO_STAGE_COMMAND = process.env.READY_TO_STAGE_COMMAND || '';
+const READY_TO_STAGE_LABEL = (process.env.READY_TO_STAGE_LABEL || 'ready-to-stage').toLowerCase();
 
 function readJson(p) {
   try {
@@ -53,6 +55,16 @@ function compactTitle(s, max = 80) {
   const oneLine = String(s).replace(/\s+/g, ' ').trim();
   if (oneLine.length <= max) return oneLine;
   return `${oneLine.slice(0, max - 3)}...`;
+}
+
+function normalizeLabels(labels) {
+  return (labels || [])
+    .map((l) => (typeof l === 'string' ? l : l?.name))
+    .filter(Boolean);
+}
+
+function hasReadyToStageLabel(labels) {
+  return normalizeLabels(labels).some((l) => String(l).toLowerCase() === READY_TO_STAGE_LABEL);
 }
 
 function prNumFromPayload(payload) {
@@ -113,8 +125,8 @@ function extractRepoParts(repo) {
   return { owner, name };
 }
 
-function isCodeRabbitLogin(login) {
-  return /coderabbit/i.test(String(login || ''));
+function isAutomationReviewLogin(login) {
+  return /(coderabbit|copilot|github-copilot)/i.test(String(login || ''));
 }
 
 function maxIso(a, b) {
@@ -123,7 +135,7 @@ function maxIso(a, b) {
   return new Date(a).getTime() >= new Date(b).getTime() ? a : b;
 }
 
-async function getLatestCodeRabbitActivityIso(prNumber) {
+async function getLatestAutomationReviewActivityIso(prNumber) {
   const base = `${API}/repos/${REPO}`;
   const [reviews, issueComments, reviewComments] = await Promise.all([
     ghGetJson(`${base}/pulls/${prNumber}/reviews?per_page=100`),
@@ -134,13 +146,13 @@ async function getLatestCodeRabbitActivityIso(prNumber) {
   let latest = null;
 
   for (const r of reviews || []) {
-    if (isCodeRabbitLogin(r?.user?.login)) latest = maxIso(latest, r?.submitted_at);
+    if (isAutomationReviewLogin(r?.user?.login)) latest = maxIso(latest, r?.submitted_at);
   }
   for (const c of issueComments || []) {
-    if (isCodeRabbitLogin(c?.user?.login)) latest = maxIso(latest, c?.created_at);
+    if (isAutomationReviewLogin(c?.user?.login)) latest = maxIso(latest, c?.created_at);
   }
   for (const c of reviewComments || []) {
-    if (isCodeRabbitLogin(c?.user?.login)) latest = maxIso(latest, c?.created_at);
+    if (isAutomationReviewLogin(c?.user?.login)) latest = maxIso(latest, c?.created_at);
   }
 
   return latest;
@@ -152,7 +164,7 @@ async function getHeadCommitIso(sha) {
   return commit?.commit?.committer?.date || commit?.commit?.author?.date || null;
 }
 
-async function getCodeRabbitUnresolvedThreadCount(prNumber) {
+async function getAutomationUnresolvedThreadCount(prNumber) {
   const { owner, name } = extractRepoParts(REPO);
   const query = `
     query($owner:String!, $name:String!, $number:Int!, $after:String) {
@@ -182,7 +194,7 @@ async function getCodeRabbitUnresolvedThreadCount(prNumber) {
     for (const t of nodes) {
       if (t?.isResolved || t?.isOutdated) continue;
       const authors = (t?.comments?.nodes || []).map((n) => n?.author?.login).filter(Boolean);
-      if (authors.some((a) => isCodeRabbitLogin(a))) unresolved += 1;
+      if (authors.some((a) => isAutomationReviewLogin(a))) unresolved += 1;
     }
 
     if (!threads?.pageInfo?.hasNextPage) break;
@@ -258,11 +270,11 @@ function buildCodexPrompt(item) {
     `Pull Request: #${item.number} - ${item.title}`,
     `URL: ${item.url}`,
     `Head SHA: ${item.headSha}`,
-    `Unresolved CodeRabbit threads: ${item.unresolved}`,
-    `CodeRabbit latest activity: ${item.coderabbitLast}`,
+    `Unresolved automation review threads (CodeRabbit/Copilot): ${item.unresolved}`,
+    `Latest automation review activity: ${item.reviewLast}`,
     '',
     'Execution requirements:',
-    '- Resolve the unresolved CodeRabbit review feedback on this PR.',
+    '- Resolve unresolved automation review feedback (CodeRabbit/Copilot) on this PR.',
     '- Push fixes to the PR branch.',
     '- Do not open a new PR for this task.',
     '- Post concise review-response comments if needed.',
@@ -349,10 +361,35 @@ function runCodex(prompt, repoDir) {
   });
 }
 
+async function runReadyToStage(repoDir, prNumber) {
+  if (!READY_TO_STAGE_COMMAND.trim()) {
+    return { skipped: true, reason: 'READY_TO_STAGE_COMMAND not set' };
+  }
+
+  const env = {
+    ...process.env,
+    PR_NUMBER: String(prNumber),
+  };
+
+  const result = await runCommand('/bin/bash', ['-lc', READY_TO_STAGE_COMMAND], {
+    cwd: repoDir,
+    env,
+  });
+
+  return {
+    skipped: false,
+    exitCode: result.code,
+    signal: result.signal,
+    stdout: result.stdout ? result.stdout.slice(-4000) : '',
+    stderr: result.stderr ? result.stderr.slice(-4000) : '',
+  };
+}
+
 async function main() {
   const state = readJson(STATE_PATH) || {};
   const lastEventId = state.lastEventId;
   const notified = state.notified || {};
+  const readyToStageState = state.readyToStage || {};
 
   const events = await ghGetJson(EVENTS_URL);
   const newestEventId = events?.[0]?.id ? String(events[0].id) : null;
@@ -367,6 +404,7 @@ async function main() {
     actionable: [],
     ready: [],
     codexRuns: [],
+    readyToStageRuns: [],
   };
 
   if (!newestEventId || !Array.isArray(events) || events.length === 0) {
@@ -375,7 +413,7 @@ async function main() {
   }
 
   if (!lastEventId) {
-    writeJsonAtomic(STATE_PATH, { lastEventId: newestEventId, notified, ts: new Date().toISOString() });
+    writeJsonAtomic(STATE_PATH, { lastEventId: newestEventId, notified, readyToStage: readyToStageState, ts: new Date().toISOString() });
     out.initialized = true;
     console.log(JSON.stringify(out));
     return;
@@ -383,14 +421,14 @@ async function main() {
 
   const idx = events.findIndex((e) => String(e.id) === String(lastEventId));
   if (idx === -1) {
-    writeJsonAtomic(STATE_PATH, { lastEventId: newestEventId, notified, ts: new Date().toISOString(), reset: true });
+    writeJsonAtomic(STATE_PATH, { lastEventId: newestEventId, notified, readyToStage: readyToStageState, ts: new Date().toISOString(), reset: true });
     out.reset = true;
     console.log(JSON.stringify(out));
     return;
   }
 
   const newer = events.slice(0, idx).reverse();
-  writeJsonAtomic(STATE_PATH, { lastEventId: newestEventId, notified, ts: new Date().toISOString() });
+  writeJsonAtomic(STATE_PATH, { lastEventId: newestEventId, notified, readyToStage: readyToStageState, ts: new Date().toISOString() });
 
   const prsToEvaluate = new Set();
   for (const ev of newer) {
@@ -429,10 +467,8 @@ async function main() {
     }
   }
 
+  const readyToStageCandidates = [];
   for (const prNum of Array.from(prsToEvaluate)) {
-    const latestCR = await getLatestCodeRabbitActivityIso(prNum).catch(() => null);
-    if (!latestCR) continue;
-
     const prData = await ghGetJson(`${API}/repos/${REPO}/pulls/${prNum}`).catch(() => null);
     if (!prData?.head?.sha) continue;
 
@@ -441,40 +477,62 @@ async function main() {
       title: compactTitle(prData.title, 80),
       url: prData.html_url,
       headSha: prData.head.sha,
-      coderabbitLast: latestCR,
+      reviewLast: null,
+      coderabbitLast: null,
       unresolved: 0,
     };
 
-    const unresolved = await getCodeRabbitUnresolvedThreadCount(prNum).catch(() => null);
+    if (hasReadyToStageLabel(prData.labels)) {
+      readyToStageCandidates.push({
+        number: item.number,
+        title: item.title,
+        url: item.url,
+        headSha: item.headSha,
+      });
+    }
+
+    const latestReview = await getLatestAutomationReviewActivityIso(prNum).catch(() => null);
+    if (!latestReview) continue;
+    item.reviewLast = latestReview;
+    item.coderabbitLast = latestReview;
+
+    const unresolved = await getAutomationUnresolvedThreadCount(prNum).catch(() => null);
     const headCommitIso = await getHeadCommitIso(item.headSha).catch(() => null);
     if (unresolved == null || !headCommitIso) continue;
 
     item.unresolved = unresolved;
-    const crMs = new Date(latestCR).getTime();
+    const reviewMs = new Date(latestReview).getTime();
     const headMs = new Date(headCommitIso).getTime();
     const prKey = String(prNum);
     const lastNotified = notified[prKey] || {};
+    const lastNotifiedReview = lastNotified.latestReview || lastNotified.latestCR;
 
     if (unresolved > 0) {
       out.actionable.push(item);
       continue;
     }
 
-    if (headMs > crMs) {
-      if (!(lastNotified.sha === item.headSha && lastNotified.latestCR === latestCR)) {
+    if (headMs > reviewMs) {
+      if (!(lastNotified.sha === item.headSha && lastNotifiedReview === latestReview)) {
         out.ready.push({
           number: item.number,
           title: item.title,
           url: item.url,
           headSha: item.headSha,
-          coderabbitLast: latestCR,
+          reviewLast: latestReview,
+          coderabbitLast: latestReview,
         });
-        notified[prKey] = { sha: item.headSha, latestCR, notifiedAt: new Date().toISOString() };
+        notified[prKey] = {
+          sha: item.headSha,
+          latestReview,
+          latestCR: latestReview,
+          notifiedAt: new Date().toISOString(),
+        };
       }
     }
   }
 
-  writeJsonAtomic(STATE_PATH, { lastEventId: newestEventId, notified, ts: new Date().toISOString() });
+  writeJsonAtomic(STATE_PATH, { lastEventId: newestEventId, notified, readyToStage: readyToStageState, ts: new Date().toISOString() });
 
   for (const item of out.actionable) {
     const prompt = buildCodexPrompt(item);
@@ -491,6 +549,33 @@ async function main() {
       }
     }
   }
+
+  for (const item of readyToStageCandidates) {
+    const key = String(item.number);
+    const prev = readyToStageState[key] || {};
+    if (prev.sha === item.headSha) {
+      out.readyToStageRuns.push({ pr: item.number, skipped: true, reason: 'already processed for current head sha' });
+      continue;
+    }
+
+    let repoDir = null;
+    try {
+      repoDir = await prepareRepoForPR(item.number);
+      const readyStage = await runReadyToStage(repoDir, item.number);
+      out.readyToStageRuns.push({ pr: item.number, ...readyStage });
+      if (!readyStage.skipped && readyStage.exitCode === 0) {
+        readyToStageState[key] = { sha: item.headSha, ranAt: new Date().toISOString() };
+      }
+    } catch (err) {
+      out.readyToStageRuns.push({ pr: item.number, skipped: false, exitCode: 1, signal: null, error: String(err) });
+    } finally {
+      if (repoDir) {
+        fs.rmSync(repoDir, { recursive: true, force: true });
+      }
+    }
+  }
+
+  writeJsonAtomic(STATE_PATH, { lastEventId: newestEventId, notified, readyToStage: readyToStageState, ts: new Date().toISOString() });
 
   console.log(JSON.stringify(out));
 
