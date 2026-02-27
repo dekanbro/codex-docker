@@ -175,16 +175,14 @@ async function collectActionableEvents() {
     return { newestEventId, initialized: true, reset: false, matched: [], actionable: [] };
   }
 
-  if (String(lastEventId) === String(newestEventId)) {
-    return { newestEventId, initialized: false, reset: false, matched: [], actionable: [] };
-  }
-
   const newOnes = [];
-  for (const ev of events) {
-    if (String(ev.id) === String(lastEventId)) {
-      break;
+  if (String(lastEventId) !== String(newestEventId)) {
+    for (const ev of events) {
+      if (String(ev.id) === String(lastEventId)) {
+        break;
+      }
+      newOnes.push(ev);
     }
-    newOnes.push(ev);
   }
 
   if (newOnes.length === events.length) {
