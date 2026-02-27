@@ -9,10 +9,17 @@ case "$MODE" in
     exec sleep infinity
     ;;
   cron)
+    codex_auth_dir="${CODEX_AUTH_DIR:-${HOME:-/root}/.codex}"
+    codex_auth_file="$codex_auth_dir/auth.json"
     if [[ -n "${CODEX_AUTH:-}" ]]; then
-      mkdir -p /root/.codex
-      printf '%s' "$CODEX_AUTH" > /root/.codex/auth.json
-      chmod 600 /root/.codex/auth.json
+      mkdir -p "$codex_auth_dir"
+      # Do not overwrite an existing auth file by default; Codex rotates refresh
+      # tokens and persists them to disk. Overwriting with stale CODEX_AUTH can
+      # cause refresh_token_reused failures.
+      if [[ "${CODEX_AUTH_OVERWRITE:-0}" == "1" || ! -s "$codex_auth_file" ]]; then
+        printf '%s' "$CODEX_AUTH" > "$codex_auth_file"
+        chmod 600 "$codex_auth_file"
+      fi
     fi
 
     if [[ -n "${CODEX_CRON_COMMAND:-}" ]]; then

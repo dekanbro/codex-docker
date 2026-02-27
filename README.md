@@ -85,4 +85,11 @@ Set these env vars on `codex-cron` for this mode:
 - `GITHUB_PR_REVIEW_STATE_PATH` (optional)
 - `CODEX_MODEL` (optional)
 - `CODEX_REVIEW_BASE_PROMPT` (optional)
+- `CODEX_AUTH` (optional bootstrap auth JSON)
+- `CODEX_AUTH_DIR` (optional, default `$HOME/.codex`)
+- `CODEX_AUTH_OVERWRITE` (optional, default `0`; set `1` only for one run when reseeding auth)
 - `CODEX_CRON_COMMAND=node /workspace/scripts/cron/github-pr-review-codex-cron.mjs`
+
+Auth note:
+- In `cron` mode, `CODEX_AUTH` now seeds `auth.json` only when the file is missing (or when `CODEX_AUTH_OVERWRITE=1`).
+- This avoids clobbering rotated refresh tokens and prevents `refresh_token_reused` failures.

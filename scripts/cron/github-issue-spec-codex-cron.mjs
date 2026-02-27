@@ -76,11 +76,33 @@ async function hasOpenPRForIssue(issueNumber) {
   return (data?.total_count || 0) > 0;
 }
 
+async function listOpenModuleSpecIssues() {
+  const q = `repo:${REPO} type:issue state:open label:\"${SPEC_LABEL}\"`;
+  const url = `${API}/search/issues?q=${encodeURIComponent(q)}&per_page=50`;
+  const data = await ghGet(url);
+  const items = Array.isArray(data?.items) ? data.items : [];
+  return items.map((issue) => ({
+    number: issue.number,
+    title: issue.title,
+    url: issue.html_url,
+    user: issue.user?.login,
+    checked: checkboxChecked(issue.body || ''),
+    updated_at: issue.updated_at,
+    labels: (issue.labels || []).map((l) => (typeof l === 'string' ? l : l.name)).filter(Boolean),
+  }));
+}
+
 function hasModuleSpecLabel(issue) {
+  const normalizeLabel = (v) => String(v || '')
+    .toLowerCase()
+    .trim()
+    .replace(/[_\s]+/g, '-')
+    .replace(/-+/g, '-');
+  const target = normalizeLabel(SPEC_LABEL);
   const labels = (issue.labels || [])
     .map((l) => (typeof l === 'string' ? l : l.name))
     .filter(Boolean);
-  return labels.some((l) => String(l).toLowerCase() === SPEC_LABEL);
+  return labels.some((l) => normalizeLabel(l) === target);
 }
 
 function checkboxChecked(issueBody) {
@@ -174,6 +196,7 @@ async function collectActionableEvents() {
 
   const matched = [];
   const actionable = [];
+  const actionableByIssue = new Map();
 
   for (const ev of newOnes) {
     if (ev.type !== 'IssuesEvent') {
@@ -223,7 +246,38 @@ async function collectActionableEvents() {
     }
   }
 
-  const filteredActionable = actionable.filter((a) => !a.prAlreadyOpen);
+  for (const item of actionable) {
+    if (item.prAlreadyOpen) continue;
+    actionableByIssue.set(String(item.number), item);
+  }
+
+  // Fallback sweep: catch labeled+checked issues even if their triggering event
+  // is outside the events cursor window.
+  let sweep = [];
+  try {
+    sweep = await listOpenModuleSpecIssues();
+  } catch {
+    sweep = [];
+  }
+  for (const issue of sweep) {
+    if (!issue.checked) continue;
+    if (actionableByIssue.has(String(issue.number))) continue;
+    let prAlreadyOpen = false;
+    try {
+      prAlreadyOpen = await hasOpenPRForIssue(issue.number);
+    } catch {
+      prAlreadyOpen = false;
+    }
+    if (prAlreadyOpen) continue;
+    actionableByIssue.set(String(issue.number), {
+      ...issue,
+      id: `sweep-${issue.number}`,
+      action: 'sweep',
+      prAlreadyOpen,
+    });
+  }
+
+  const filteredActionable = Array.from(actionableByIssue.values());
 
   writeState({ lastEventId: newestEventId, ts: new Date().toISOString() });
 
