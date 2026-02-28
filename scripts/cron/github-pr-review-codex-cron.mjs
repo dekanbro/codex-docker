@@ -164,6 +164,11 @@ async function getHeadCommitIso(sha) {
   return commit?.commit?.committer?.date || commit?.commit?.author?.date || null;
 }
 
+async function getPRHeadSha(prNumber) {
+  const pr = await ghGetJson(`${API}/repos/${REPO}/pulls/${prNumber}`);
+  return pr?.head?.sha || null;
+}
+
 async function getAutomationUnresolvedThreadCount(prNumber) {
   const { owner, name } = extractRepoParts(REPO);
   const query = `
@@ -361,6 +366,20 @@ function runCodex(prompt, repoDir) {
   });
 }
 
+function inferResolutionReason(before, after) {
+  if (!after) return 'post_run_observation_unavailable';
+  if (after.afterUnresolved < before.beforeUnresolved) {
+    if (after.afterHeadSha && after.afterHeadSha !== before.beforeHeadSha) {
+      return 'threads_reduced_after_code_change';
+    }
+    return 'threads_reduced_without_head_change';
+  }
+  if (after.afterHeadSha && after.afterHeadSha !== before.beforeHeadSha) {
+    return 'code_changed_but_threads_not_reduced';
+  }
+  return 'no_observable_change';
+}
+
 async function runReadyToStage(repoDir, prNumber) {
   if (!READY_TO_STAGE_COMMAND.trim()) {
     return { skipped: true, reason: 'READY_TO_STAGE_COMMAND not set' };
@@ -537,12 +556,37 @@ async function main() {
   for (const item of out.actionable) {
     const prompt = buildCodexPrompt(item);
     let repoDir = null;
+    const before = {
+      beforeHeadSha: item.headSha,
+      beforeUnresolved: item.unresolved,
+      beforeReviewLast: item.reviewLast || item.coderabbitLast || null,
+    };
     try {
       repoDir = await prepareRepoForPR(item.number);
       const run = await runCodex(prompt, repoDir);
-      out.codexRuns.push({ pr: item.number, exitCode: run.code, signal: run.signal });
+      const afterHeadSha = await getPRHeadSha(item.number).catch(() => null);
+      const afterUnresolved = await getAutomationUnresolvedThreadCount(item.number).catch(() => null);
+      const afterReviewLast = await getLatestAutomationReviewActivityIso(item.number).catch(() => null);
+      const after = (afterHeadSha == null || afterUnresolved == null)
+        ? null
+        : { afterHeadSha, afterUnresolved, afterReviewLast };
+      out.codexRuns.push({
+        pr: item.number,
+        exitCode: run.code,
+        signal: run.signal,
+        ...before,
+        ...(after || {}),
+        resolutionReason: inferResolutionReason(before, after),
+      });
     } catch (err) {
-      out.codexRuns.push({ pr: item.number, exitCode: 1, signal: null, error: String(err) });
+      out.codexRuns.push({
+        pr: item.number,
+        exitCode: 1,
+        signal: null,
+        ...before,
+        resolutionReason: 'run_failed',
+        error: String(err),
+      });
     } finally {
       if (repoDir) {
         fs.rmSync(repoDir, { recursive: true, force: true });

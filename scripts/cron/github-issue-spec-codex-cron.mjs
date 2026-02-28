@@ -27,7 +27,9 @@ const SPEC_LABEL = (process.env.MODULE_SPEC_LABEL || 'module-spec').toLowerCase(
 const CODEX_MODEL = process.env.CODEX_MODEL || '';
 const CODEX_BASE_PROMPT = process.env.CODEX_BASE_PROMPT || [
   'You are an autonomous coding agent running in cron mode.',
-  'Read the linked GitHub issue and implement the requested module spec.',
+  'Read the linked GitHub issue and implement the requested work in code.',
+  'Treat "module spec" issues as implementation tasks unless the issue explicitly says docs-only.',
+  'Do not stop at writing a planning/spec markdown file if the issue asks for actual product behavior.',
   'Open a PR back to the same repository.',
   'If a PR cannot be created, explain precisely what is missing and exit non-zero.'
 ].join(' ');
@@ -126,6 +128,9 @@ function buildCodexPrompt(item) {
     '',
     'Execution requirements:',
     `- Ensure PR body includes: Fixes #${item.number}`,
+    '- Implement the feature/behavior described in the issue with concrete code changes.',
+    '- Include tests or validation updates when appropriate for the implementation.',
+    '- A docs/spec-only PR is not acceptable unless the issue explicitly requests documentation-only output.',
     '- Keep changes minimal and focused to the issue request.',
     '- Run relevant tests or checks before opening PR.',
     '- Install repository dependencies before running lint/tests if needed.',
