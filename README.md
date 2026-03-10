@@ -55,9 +55,10 @@ A ready-made job is included at `scripts/cron/github-issue-spec-codex-cron.mjs`.
 
 It:
 - Polls GitHub issue events for a label (default `module-spec`).
-- Maintains cursor state in `/workspace/.codex/cron/github-issue-spec-state.json`.
+- Maintains cursor state in `$CODEX_AUTH_DIR/cron/github-issue-spec-state.json` (default `/root/.codex/cron/github-issue-spec-state.json`).
 - Detects actionable issues with the checked "auto-generate PR" checkbox.
 - Skips issues that already have an open PR containing `Fixes #<issue>`.
+- Falls back to sweeping currently-open checked module-spec issues, including after a cursor reset.
 - Runs `codex run` once per actionable issue.
 
 Set these env vars on `codex-cron`:
@@ -65,6 +66,7 @@ Set these env vars on `codex-cron`:
 - `GITHUB_REPO` (for example `raid-guild/cohort-portal-spike`)
 - `MODULE_SPEC_LABEL` (optional, default `module-spec`)
 - `GITHUB_ISSUE_SPEC_STATE_PATH` (optional)
+- `GITHUB_ISSUE_SPEC_RESET=1` (optional one-shot reset; rebuilds the cursor and still runs the open-issue sweep)
 - `CODEX_MODEL` (optional)
 - `CODEX_BASE_PROMPT` (optional override for agent instructions)
 - `CODEX_CRON_COMMAND=node /workspace/scripts/cron/github-issue-spec-codex-cron.mjs`
@@ -77,12 +79,14 @@ It:
 - Monitors repo events for check/deployment failures (`urgent` output).
 - Finds PRs with unresolved CodeRabbit threads (`actionable` output + Codex runs).
 - Detects PRs where CodeRabbit threads are resolved and commits moved forward (`ready` output).
-- Maintains state in `/workspace/.codex/cron/github-pr-review-state.json`.
+- Maintains state in `$CODEX_AUTH_DIR/cron/github-pr-review-state.json` (default `/root/.codex/cron/github-pr-review-state.json`).
+- Falls back to evaluating currently-open candidate PRs even after a cursor reset or first-run initialization.
 
 Set these env vars on `codex-cron` for this mode:
 - `GH_TOKEN` (required)
 - `GITHUB_REPO` (for example `raid-guild/cohort-portal-spike`)
 - `GITHUB_PR_REVIEW_STATE_PATH` (optional)
+- `GITHUB_PR_REVIEW_RESET=1` (optional one-shot reset; rebuilds the cursor and still evaluates open PR candidates)
 - `CODEX_MODEL` (optional)
 - `CODEX_REVIEW_BASE_PROMPT` (optional)
 - `CODEX_AUTH` (optional bootstrap auth JSON)

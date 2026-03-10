@@ -9,7 +9,7 @@
  * - ready: PRs with threads resolved and head commit newer than latest automation-review activity
  *
  * State:
- * - /workspace/.codex/cron/github-pr-review-state.json
+ * - $CODEX_AUTH_DIR/cron/github-pr-review-state.json
  *   {
  *     lastEventId,
  *     notified: { "<prNumber>": { sha, latestReview, latestCR, notifiedAt } }
@@ -23,8 +23,11 @@ import { spawn } from 'node:child_process';
 const REPO = process.env.GITHUB_REPO || 'raid-guild/cohort-portal-spike';
 const API = 'https://api.github.com';
 const EVENTS_URL = `${API}/repos/${REPO}/events?per_page=100`;
-const STATE_PATH = process.env.GITHUB_PR_REVIEW_STATE_PATH || '/workspace/.codex/cron/github-pr-review-state.json';
+const CODEX_HOME = process.env.CODEX_AUTH_DIR || path.join(process.env.HOME || '/root', '.codex');
+const STATE_PATH = process.env.GITHUB_PR_REVIEW_STATE_PATH || path.join(CODEX_HOME, 'cron', 'github-pr-review-state.json');
+const FORCE_RESET = process.env.GITHUB_PR_REVIEW_RESET === '1';
 const CODEX_MODEL = process.env.CODEX_MODEL || '';
+const CODEX_POST_CHECK_COMMAND = process.env.CODEX_POST_CHECK_COMMAND || '';
   const CODEX_REVIEW_BASE_PROMPT = process.env.CODEX_REVIEW_BASE_PROMPT || [
   'You are an autonomous coding agent running in cron mode.',
   'Address unresolved automation review threads (CodeRabbit/Copilot) on the PR and push fixes.',
@@ -366,6 +369,37 @@ function runCodex(prompt, repoDir) {
   });
 }
 
+async function runPostCheck(repoDir) {
+  const cmd = CODEX_POST_CHECK_COMMAND.trim();
+  if (cmd) {
+    const result = await runCommand('/bin/bash', ['-lc', cmd], { cwd: repoDir, env: process.env });
+    return {
+      skipped: false,
+      command: cmd,
+      exitCode: result.code,
+      signal: result.signal,
+      stdout: result.stdout ? result.stdout.slice(-4000) : '',
+      stderr: result.stderr ? result.stderr.slice(-4000) : '',
+    };
+  }
+
+  // Safe default for JS/TS repos: run build if package.json exists.
+  const packageJsonPath = path.join(repoDir, 'package.json');
+  if (!fs.existsSync(packageJsonPath)) {
+    return { skipped: true, reason: 'no package.json and no CODEX_POST_CHECK_COMMAND configured' };
+  }
+
+  const result = await runCommand('/bin/bash', ['-lc', 'npm run build'], { cwd: repoDir, env: process.env });
+  return {
+    skipped: false,
+    command: 'npm run build',
+    exitCode: result.code,
+    signal: result.signal,
+    stdout: result.stdout ? result.stdout.slice(-4000) : '',
+    stderr: result.stderr ? result.stderr.slice(-4000) : '',
+  };
+}
+
 function inferResolutionReason(before, after) {
   if (!after) return 'post_run_observation_unavailable';
   if (after.afterUnresolved < before.beforeUnresolved) {
@@ -406,7 +440,7 @@ async function runReadyToStage(repoDir, prNumber) {
 
 async function main() {
   const state = readJson(STATE_PATH) || {};
-  const lastEventId = state.lastEventId;
+  const lastEventId = FORCE_RESET ? null : state.lastEventId;
   const notified = state.notified || {};
   const readyToStageState = state.readyToStage || {};
 
@@ -417,8 +451,8 @@ async function main() {
     repo: REPO,
     statePath: STATE_PATH,
     newestEventId,
-    initialized: false,
-    reset: false,
+    initialized: FORCE_RESET,
+    reset: FORCE_RESET,
     urgent: [],
     actionable: [],
     ready: [],
@@ -434,20 +468,18 @@ async function main() {
   if (!lastEventId) {
     writeJsonAtomic(STATE_PATH, { lastEventId: newestEventId, notified, readyToStage: readyToStageState, ts: new Date().toISOString() });
     out.initialized = true;
-    console.log(JSON.stringify(out));
-    return;
   }
-
-  const idx = events.findIndex((e) => String(e.id) === String(lastEventId));
-  if (idx === -1) {
-    writeJsonAtomic(STATE_PATH, { lastEventId: newestEventId, notified, readyToStage: readyToStageState, ts: new Date().toISOString(), reset: true });
-    out.reset = true;
-    console.log(JSON.stringify(out));
-    return;
+  let newer = [];
+  if (lastEventId) {
+    const idx = events.findIndex((e) => String(e.id) === String(lastEventId));
+    if (idx === -1) {
+      writeJsonAtomic(STATE_PATH, { lastEventId: newestEventId, notified, readyToStage: readyToStageState, ts: new Date().toISOString(), reset: true });
+      out.reset = true;
+    } else {
+      newer = events.slice(0, idx).reverse();
+      writeJsonAtomic(STATE_PATH, { lastEventId: newestEventId, notified, readyToStage: readyToStageState, ts: new Date().toISOString() });
+    }
   }
-
-  const newer = events.slice(0, idx).reverse();
-  writeJsonAtomic(STATE_PATH, { lastEventId: newestEventId, notified, readyToStage: readyToStageState, ts: new Date().toISOString() });
 
   const prsToEvaluate = new Set();
   for (const ev of newer) {
@@ -564,6 +596,10 @@ async function main() {
     try {
       repoDir = await prepareRepoForPR(item.number);
       const run = await runCodex(prompt, repoDir);
+      let postCheck = { skipped: true, reason: 'codex_run_failed' };
+      if (run.code === 0) {
+        postCheck = await runPostCheck(repoDir);
+      }
       const afterHeadSha = await getPRHeadSha(item.number).catch(() => null);
       const afterUnresolved = await getAutomationUnresolvedThreadCount(item.number).catch(() => null);
       const afterReviewLast = await getLatestAutomationReviewActivityIso(item.number).catch(() => null);
@@ -577,6 +613,7 @@ async function main() {
         ...before,
         ...(after || {}),
         resolutionReason: inferResolutionReason(before, after),
+        postCheck,
       });
     } catch (err) {
       out.codexRuns.push({
@@ -585,6 +622,7 @@ async function main() {
         signal: null,
         ...before,
         resolutionReason: 'run_failed',
+        postCheck: { skipped: true, reason: 'run_failed' },
         error: String(err),
       });
     } finally {
@@ -624,7 +662,8 @@ async function main() {
   console.log(JSON.stringify(out));
 
   const failedRun = out.codexRuns.find((r) => r.exitCode !== 0);
-  if (failedRun) process.exit(1);
+  const failedPostCheck = out.codexRuns.find((r) => !r?.postCheck?.skipped && r?.postCheck?.exitCode !== 0);
+  if (failedRun || failedPostCheck) process.exit(1);
 }
 
 main().catch((err) => {

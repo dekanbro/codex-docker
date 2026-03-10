@@ -22,8 +22,10 @@ const REPO = process.env.GITHUB_REPO || 'raid-guild/cohort-portal-spike';
 const GH_TOKEN = process.env.GH_TOKEN;
 const API = 'https://api.github.com';
 const EVENTS_URL = `${API}/repos/${REPO}/events?per_page=100`;
-const STATE_PATH = process.env.GITHUB_ISSUE_SPEC_STATE_PATH || '/workspace/.codex/cron/github-issue-spec-state.json';
+const CODEX_HOME = process.env.CODEX_AUTH_DIR || path.join(process.env.HOME || '/root', '.codex');
+const STATE_PATH = process.env.GITHUB_ISSUE_SPEC_STATE_PATH || path.join(CODEX_HOME, 'cron', 'github-issue-spec-state.json');
 const SPEC_LABEL = (process.env.MODULE_SPEC_LABEL || 'module-spec').toLowerCase();
+const FORCE_RESET = process.env.GITHUB_ISSUE_SPEC_RESET === '1';
 const CODEX_MODEL = process.env.CODEX_MODEL || '';
 const CODEX_BASE_PROMPT = process.env.CODEX_BASE_PROMPT || [
   'You are an autonomous coding agent running in cron mode.',
@@ -166,7 +168,7 @@ function runCodex(prompt) {
 
 async function collectActionableEvents() {
   const state = readState();
-  const lastEventId = state?.lastEventId || null;
+  const lastEventId = FORCE_RESET ? null : state?.lastEventId || null;
 
   const events = await ghGet(EVENTS_URL);
   const newestEventId = events?.[0]?.id || null;
@@ -175,13 +177,15 @@ async function collectActionableEvents() {
     return { newestEventId: null, initialized: false, reset: false, matched: [], actionable: [] };
   }
 
+  let initialized = false;
+  let reset = FORCE_RESET;
   if (!lastEventId) {
     writeState({ lastEventId: newestEventId, ts: new Date().toISOString() });
-    return { newestEventId, initialized: true, reset: false, matched: [], actionable: [] };
+    initialized = true;
   }
 
   const newOnes = [];
-  if (String(lastEventId) !== String(newestEventId)) {
+  if (lastEventId && String(lastEventId) !== String(newestEventId)) {
     for (const ev of events) {
       if (String(ev.id) === String(lastEventId)) {
         break;
@@ -190,9 +194,9 @@ async function collectActionableEvents() {
     }
   }
 
-  if (newOnes.length === events.length) {
+  if (lastEventId && newOnes.length === events.length) {
     writeState({ lastEventId: newestEventId, ts: new Date().toISOString(), reset: true });
-    return { newestEventId, initialized: false, reset: true, matched: [], actionable: [] };
+    reset = true;
   }
 
   newOnes.reverse();
@@ -286,8 +290,8 @@ async function collectActionableEvents() {
 
   return {
     newestEventId,
-    initialized: false,
-    reset: false,
+    initialized,
+    reset,
     matched,
     actionable: filteredActionable,
   };
