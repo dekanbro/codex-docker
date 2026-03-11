@@ -27,6 +27,7 @@ const STATE_PATH = process.env.GITHUB_ISSUE_SPEC_STATE_PATH || path.join(CODEX_H
 const SPEC_LABEL = (process.env.MODULE_SPEC_LABEL || 'module-spec').toLowerCase();
 const FORCE_RESET = process.env.GITHUB_ISSUE_SPEC_RESET === '1';
 const CODEX_MODEL = process.env.CODEX_MODEL || '';
+const CODEX_OUTPUT_TAIL_BYTES = Number(process.env.CODEX_OUTPUT_TAIL_BYTES || 12000);
 const CODEX_BASE_PROMPT = process.env.CODEX_BASE_PROMPT || [
   'You are an autonomous coding agent running in cron mode.',
   'Read the linked GitHub issue and implement the requested work in code.',
@@ -114,7 +115,7 @@ function checkboxChecked(issueBody) {
     return false;
   }
   const lines = issueBody.split(/\r?\n/);
-  return lines.some((l) => /^\s*-\s*\[x\]\s+/i.test(l) && /auto-?generate/i.test(l) && /\bpr\b/i.test(l));
+  return lines.some((l) => /^\s*[-*+]\s*\[x\]\s+/i.test(l) && /auto-?generate/i.test(l) && /\bpr\b/i.test(l));
 }
 
 function buildCodexPrompt(item) {
@@ -156,12 +157,32 @@ function runCodex(prompt) {
     }
 
     const child = spawn('codex', args, {
-      stdio: 'inherit',
+      stdio: ['ignore', 'pipe', 'pipe'],
       env: codexEnv,
     });
 
+    let stdout = '';
+    let stderr = '';
+    child.stdout?.on('data', (chunk) => {
+      stdout += String(chunk);
+      if (stdout.length > CODEX_OUTPUT_TAIL_BYTES * 2) {
+        stdout = stdout.slice(-CODEX_OUTPUT_TAIL_BYTES);
+      }
+    });
+    child.stderr?.on('data', (chunk) => {
+      stderr += String(chunk);
+      if (stderr.length > CODEX_OUTPUT_TAIL_BYTES * 2) {
+        stderr = stderr.slice(-CODEX_OUTPUT_TAIL_BYTES);
+      }
+    });
+
     child.on('exit', (code, signal) => {
-      resolve({ code: code ?? 1, signal: signal ?? null });
+      resolve({
+        code: code ?? 1,
+        signal: signal ?? null,
+        stdoutTail: stdout ? stdout.slice(-CODEX_OUTPUT_TAIL_BYTES) : '',
+        stderrTail: stderr ? stderr.slice(-CODEX_OUTPUT_TAIL_BYTES) : '',
+      });
     });
   });
 }
@@ -317,6 +338,8 @@ async function collectActionableEvents() {
       issue: item.number,
       exitCode: run.code,
       signal: run.signal,
+      ...(run.code !== 0 || run.stderrTail ? { codexStderrTail: run.stderrTail } : {}),
+      ...(run.code !== 0 ? { codexStdoutTail: run.stdoutTail } : {}),
     });
   }
 

@@ -27,6 +27,7 @@ const CODEX_HOME = process.env.CODEX_AUTH_DIR || path.join(process.env.HOME || '
 const STATE_PATH = process.env.GITHUB_PR_REVIEW_STATE_PATH || path.join(CODEX_HOME, 'cron', 'github-pr-review-state.json');
 const FORCE_RESET = process.env.GITHUB_PR_REVIEW_RESET === '1';
 const CODEX_MODEL = process.env.CODEX_MODEL || '';
+const CODEX_OUTPUT_TAIL_BYTES = Number(process.env.CODEX_OUTPUT_TAIL_BYTES || 12000);
 const CODEX_POST_CHECK_COMMAND = process.env.CODEX_POST_CHECK_COMMAND || '';
   const CODEX_REVIEW_BASE_PROMPT = process.env.CODEX_REVIEW_BASE_PROMPT || [
   'You are an autonomous coding agent running in cron mode.',
@@ -358,13 +359,33 @@ function runCodex(prompt, repoDir) {
     }
 
     const child = spawn('codex', args, {
-      stdio: 'inherit',
+      stdio: ['ignore', 'pipe', 'pipe'],
       cwd: repoDir,
       env: codexEnv,
     });
 
+    let stdout = '';
+    let stderr = '';
+    child.stdout?.on('data', (chunk) => {
+      stdout += String(chunk);
+      if (stdout.length > CODEX_OUTPUT_TAIL_BYTES * 2) {
+        stdout = stdout.slice(-CODEX_OUTPUT_TAIL_BYTES);
+      }
+    });
+    child.stderr?.on('data', (chunk) => {
+      stderr += String(chunk);
+      if (stderr.length > CODEX_OUTPUT_TAIL_BYTES * 2) {
+        stderr = stderr.slice(-CODEX_OUTPUT_TAIL_BYTES);
+      }
+    });
+
     child.on('exit', (code, signal) => {
-      resolve({ code: code ?? 1, signal: signal ?? null });
+      resolve({
+        code: code ?? 1,
+        signal: signal ?? null,
+        stdoutTail: stdout ? stdout.slice(-CODEX_OUTPUT_TAIL_BYTES) : '',
+        stderrTail: stderr ? stderr.slice(-CODEX_OUTPUT_TAIL_BYTES) : '',
+      });
     });
   });
 }
@@ -614,6 +635,8 @@ async function main() {
         ...(after || {}),
         resolutionReason: inferResolutionReason(before, after),
         postCheck,
+        ...(run.code !== 0 || run.stderrTail ? { codexStderrTail: run.stderrTail } : {}),
+        ...(run.code !== 0 || (!after && run.stdoutTail) ? { codexStdoutTail: run.stdoutTail } : {}),
       });
     } catch (err) {
       out.codexRuns.push({
